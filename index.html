@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Torus Texture</title>
+    <style>
+        canvas {
+            display: block;
+            margin: 0 auto;
+        }
+    </style>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/gl-matrix@2.8.1/dist/gl-matrix-min.js"></script>
+</head>
+<body>
+    <h1 style="text-align: center;">Torus Texture Visualization</h1>
+    <p style="text-align: center;">Use WASD or arrow keys to move the camera.</p>
+    <p style="text-align: center;">
+        <button id="toggle-texture">Switch to Procedural Texture</button>
+    </p>
+    <canvas id="webgl-canvas" width="800" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('webgl-canvas');
+        const gl = canvas.getContext('webgl');
+
+        if (!gl) {
+            alert('WebGL not supported in your browser');
+        }
+
+        // Vertex shader source
+        const vsSource = `
+            attribute vec3 aPosition;
+            attribute vec2 aTexCoord;
+
+            uniform mat4 uModelViewMatrix;
+            uniform mat4 uProjectionMatrix;
+
+            varying vec2 vTexCoord;
+
+            void main() {
+                gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+                vTexCoord = aTexCoord;
+            }
+        `;
+
+        // Fragment shader source
+        const fsSourceImage = `
+            precision mediump float;
+
+            varying vec2 vTexCoord;
+            uniform sampler2D uTexture;
+
+            void main() {
+                gl_FragColor = texture2D(uTexture, vTexCoord);
+            }
+        `;
+
+        const fsSourceProcedural = `
+            precision mediump float;
+
+            varying vec2 vTexCoord;
+
+            void main() {
+                float stripes = mod(floor(vTexCoord.s * 20.0), 2.0);
+                vec3 color = mix(vec3(0.2, 0.6, 0.8), vec3(0.9, 0.9, 0.2), stripes);
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+
+        // Shader compilation
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                const info = gl.getShaderInfoLog(shader);
+                console.info(info);
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Shader program linking
+        function createProgram(gl, vsSource, fsSource) {
+            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
+            //const info = gl.getShaderInfoLog(vertexShader);
+            //console.info(info);
+            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+            //info = gl.getShaderInfoLog(vertexShader);
+            //console.info(info);
+
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error(gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
+
+        let textureProgram = createProgram(gl, vsSource, fsSourceImage);
+        let proceduralProgram = createProgram(gl, vsSource, fsSourceProcedural);
+
+        // Torus geometry setup
+        function createTorusData(radius, tube, radialSegments, tubularSegments) {
+            const positions = [];
+            const texCoords = [];
+            const indices = [];
+
+            for (let j = 0; j <= tubularSegments; j++) {
+                for (let i = 0; i <= radialSegments; i++) {
+                    const u = (i / radialSegments) * Math.PI * 2;
+                    const v = (j / tubularSegments) * Math.PI * 2;
+
+                    const x = (radius + tube * Math.cos(v)) * Math.cos(u);
+                    const y = (radius + tube * Math.cos(v)) * Math.sin(u);
+                    const z = tube * Math.sin(v);
+
+                    positions.push(x, y, z);
+                    texCoords.push(i / radialSegments, j / tubularSegments);
+                }
+            }
+
+            for (let j = 1; j <= tubularSegments; j++) {
+                for (let i = 1; i <= radialSegments; i++) {
+                    const a = (radialSegments + 1) * j + i - 1;
+                    const b = (radialSegments + 1) * (j - 1) + i - 1;
+                    const c = (radialSegments + 1) * (j - 1) + i;
+                    const d = (radialSegments + 1) * j + i;
+
+                    indices.push(a, b, d);
+                    indices.push(b, c, d);
+                }
+            }
+
+            return { positions, texCoords, indices };
+        }
+
+        const torusData = createTorusData(1.0, 0.4, 32, 32);
+        const positionBuffer = gl.createBuffer();
+        const texCoordBuffer = gl.createBuffer();
+        const indexBuffer = gl.createBuffer();
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(torusData.positions), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(torusData.texCoords), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(torusData.indices), gl.STATIC_DRAW);
+
+        // Texture setup
+        const texture = gl.createTexture();
+        const image = new Image();
+        image.src = 'texture_image_2.jpg'; 
+        image.onload = () => {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        };
+
+        let currentProgram = textureProgram;
+
+        document.getElementById('toggle-texture').addEventListener('click', () => {
+            currentProgram = currentProgram === textureProgram ? proceduralProgram : textureProgram;
+        });
+
+        const keysPressed = {};
+        const cameraPosition = [0, 0, -4];
+        const cameraSpeed = 0.1;
+
+        window.addEventListener('keydown', (event) => {
+            keysPressed[event.key] = true;
+        });
+
+        window.addEventListener('keyup', (event) => {
+            keysPressed[event.key] = false;
+        });
+
+        function updateCamera() {
+            if (keysPressed['w'] || keysPressed['ArrowUp']) {
+                cameraPosition[2] += cameraSpeed; // Move forward
+            }
+            if (keysPressed['s'] || keysPressed['ArrowDown']) {
+                cameraPosition[2] -= cameraSpeed; // Move backward
+            }
+            if (keysPressed['a'] || keysPressed['ArrowLeft']) {
+                cameraPosition[0] -= cameraSpeed; // Move left
+            }
+            if (keysPressed['d'] || keysPressed['ArrowRight']) {
+                cameraPosition[0] += cameraSpeed; // Move right
+            }
+        }
+
+        function drawScene() {
+            gl.clearColor(0.1, 0.1, 0.1, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+
+            gl.useProgram(currentProgram);
+
+            updateCamera();
+
+
+            // Bind attributes and uniforms
+            const positionLocation = gl.getAttribLocation(currentProgram, 'aPosition');
+            const texCoordLocation = gl.getAttribLocation(currentProgram, 'aTexCoord');
+
+            const modelViewMatrix = mat4.create();
+            const projectionMatrix = mat4.create();
+
+            mat4.perspective(projectionMatrix, Math.PI / 4, canvas.width / canvas.height, 0.1, 100.0);
+            mat4.translate(modelViewMatrix, modelViewMatrix, cameraPosition);
+
+            const uModelViewMatrixLocation = gl.getUniformLocation(currentProgram, 'uModelViewMatrix');
+            const uProjectionMatrixLocation = gl.getUniformLocation(currentProgram, 'uProjectionMatrix');
+
+            gl.uniformMatrix4fv(uModelViewMatrixLocation, false, modelViewMatrix);
+            gl.uniformMatrix4fv(uProjectionMatrixLocation, false, projectionMatrix);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.enableVertexAttribArray(positionLocation);
+            gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.enableVertexAttribArray(texCoordLocation);
+            gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+
+            if (currentProgram === textureProgram) {
+                const uTextureLocation = gl.getUniformLocation(currentProgram, 'uTexture');
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.uniform1i(uTextureLocation, 0);
+            }
+
+            gl.drawElements(gl.TRIANGLES, torusData.indices.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        function animate() {
+            drawScene();
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
